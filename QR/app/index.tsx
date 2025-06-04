@@ -1,115 +1,127 @@
 import { useState, useEffect } from "react";
-import { Text, View, StyleSheet, Button, FlatList, TouchableOpacity } from "react-native";
+import { View, Text, Button, FlatList, TouchableOpacity, StyleSheet } from "react-native";
 
 import * as Location from "expo-location";
-import * as Clipboard from "expo-clipboard"
+import * as Clipboard from "expo-clipboard";
 import { CameraView, CameraType, useCameraPermissions, BarcodeScanningResult } from "expo-camera";
+
 import { connectDb } from "../src/database";
-
-
 import { ScannedCode } from "../src/models";
 
-export default () => {
-    const [location, setLocation] = useState<Location.LocationObject | null>(null);
-    const [errorMsg, setErrorMsg] = useState<string | null>(null);
-    const [facing, setFacing] = useState<CameraType>("back");
-    const [permission, requestPermission] = useCameraPermissions();
-    const [scannedCodes, setScannedCodes] = useState<ScannedCode[]>([]);
+export default function QRScanner() {
+  const [coords, setCoords] = useState<Location.LocationObject | null>(null);
+  const [msgError, setMsgError] = useState<string | null>(null);
+  const [cameraDirection, setCameraDirection] = useState<CameraType>("back");
+  const [camPermission, requestCamPermission] = useCameraPermissions();
+  const [codesList, setCodesList] = useState<ScannedCode[]>([]);
 
-    useEffect(() => {
-        async function getCurrentLocation() {
-            let { status } = await Location.requestForegroundPermissionsAsync();
-            if (status !== 'granted') {
-                setErrorMsg('Permission to access location was denied');
-                return;
-            }
+  useEffect(() => {
+    const fetchLocation = async () => {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        setMsgError("Acceso a la ubicación denegado");
+        return;
+      }
+      const pos = await Location.getCurrentPositionAsync({});
+      setCoords(pos);
+    };
 
-            let location = await Location.getCurrentPositionAsync({});
-            setLocation(location);
-        }
-        async function retrieveLocalDbData() {
-            const db = await connectDb();
-            setScannedCodes(await db.consultarCodigos());
-        }
-        getCurrentLocation();
-        retrieveLocalDbData();
-    }, []);
+    const fetchStoredCodes = async () => {
+      const db = await connectDb();
+      const stored = await db.consultarCodigos();
+      setCodesList(stored);
+    };
 
-    if (!permission) {
-        return <View />;
-    }
-    if (!permission.granted) {
-        return (
-            <View >
-                <Text>Camera permission is required to use this app.</Text>
-                <Button title="Grant Permission" onPress={requestPermission} />
-            </View>
-        );
-    }
+    fetchLocation();
+    fetchStoredCodes();
+  }, []);
 
-    let text = 'Waiting..';
-    if (errorMsg) {
-        text = errorMsg;
-    }
-    else if (location) {
-        text = JSON.stringify(location);
-    }
-
-    const onBarcodeScanned = async function (result: BarcodeScanningResult) {
-        if (window) {
-            window.alert(result.data)
-        } else {
-            alert(result.data)
-        }
-        
-        const db = await connectDb();
-        await db.insertarCodigo(result.data, result.type);
-        setScannedCodes(await db.consultarCodigos());
-        console.log(await db.consultarCodigos())
-    }
-
-    const ScannedItem = function ({ item }: { item: ScannedCode }) {
-      const onCopyPress = function(){
-        Clipboard.setStringAsync(item.data);
-      };
-        return (
-            <View>
-                <Text>{item.data}</Text>
-                <TouchableOpacity>
-                  <Text>Copiar</Text>
-                </TouchableOpacity>
-                {/* { item.location && (
-                    <>
-                     <Text>{item.location?.timestamp}</Text>
-                     <Text>Lat {item.location?.coords.latitude}, Long: {item.location?.coords.longitude}</Text>
-                    </>
-                )} */}
-            </View>
-        )
-    }
+  if (!camPermission) return <View />;
+  if (!camPermission.granted) {
     return (
-        <View >
-            <Text >GPS: {text}</Text>
-            <CameraView facing={facing} style={styles.CameraView}
-                barcodeScannerSettings={{
-                    barcodeTypes: ['qr', "code128", "datamatrix", "aztec"]
-                }}
-                onBarcodeScanned={onBarcodeScanned}
-            />
-            <FlatList data={scannedCodes}
-                keyExtractor={(item) => item.id}
-                renderItem={ScannedItem}
-            />
-        </View>
-    )
+      <View style={styles.centered}>
+        <Text>Se requiere permiso de cámara.</Text>
+        <Button title="Solicitar Permiso" onPress={requestCamPermission} />
+      </View>
+    );
+  }
 
+  const handleBarcode = async (result: BarcodeScanningResult) => {
+    alert(result.data);
+    const db = await connectDb();
+    await db.insertarCodigo(result.data, result.type);
+    const updated = await db.consultarCodigos();
+    setCodesList(updated);
+  };
+
+  const renderCodeItem = ({ item }: { item: ScannedCode }) => {
+    const copyToClipboard = () => Clipboard.setStringAsync(item.data);
+
+    return (
+      <View style={styles.codeItem}>
+        <Text style={styles.codeText}>{item.data}</Text>
+        <TouchableOpacity onPress={copyToClipboard}>
+          <Text style={styles.copyBtn}>Copiar</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.locationText}>
+        GPS: {msgError ? msgError : coords ? JSON.stringify(coords) : "Esperando..."}
+      </Text>
+
+      <CameraView
+        style={styles.camera}
+        facing={cameraDirection}
+        barcodeScannerSettings={{
+          barcodeTypes: ["qr", "code128", "datamatrix", "aztec"],
+        }}
+        onBarcodeScanned={handleBarcode}
+      />
+
+      <FlatList
+        data={codesList}
+        keyExtractor={(item) => item.id}
+        renderItem={renderCodeItem}
+      />
+    </View>
+  );
 }
 
-
 const styles = StyleSheet.create({
-    CameraView: {
-        width: "100%",
-        minHeight: 240,
-    }
-
+  container: {
+    flex: 1,
+    padding: 12,
+    backgroundColor: "#f9f9f9",
+  },
+  centered: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  camera: {
+    width: "100%",
+    height: 250,
+    marginBottom: 16,
+  },
+  locationText: {
+    marginBottom: 8,
+    color: "#444",
+  },
+  codeItem: {
+    marginBottom: 12,
+    padding: 10,
+    backgroundColor: "#eee",
+    borderRadius: 6,
+  },
+  codeText: {
+    fontSize: 14,
+    marginBottom: 6,
+  },
+  copyBtn: {
+    color: "#007bff",
+  },
 });
