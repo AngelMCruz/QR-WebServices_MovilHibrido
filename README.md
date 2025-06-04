@@ -1,1 +1,1 @@
-"# Proyecto limpio" 
+"# Proyecto ScanQR" 
